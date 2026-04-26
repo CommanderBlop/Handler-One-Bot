@@ -16,6 +16,16 @@ from handler_bot.prompt import SYSTEM_PROMPT
 from handler_discord.bot import HandlerDiscordBot
 
 
+def _derive_butler_pythonpath(command: str) -> str:
+    """Best-effort: …/<repo>/.venv/bin/python → …/<repo>."""
+    from pathlib import Path
+    p = Path(command).resolve()
+    # If the command is .venv/bin/python, walk up two for .venv, one more for repo.
+    if p.parent.name == "bin" and p.parent.parent.name == ".venv":
+        return str(p.parent.parent.parent)
+    return str(p.parent)
+
+
 def _setup_logging(level: str) -> None:
     logging.basicConfig(
         level=level.upper(),
@@ -37,9 +47,18 @@ async def _amain() -> None:
 
     mcp = McpClient()
     if settings.butler_mcp_command:
+        import os
         butler_env = {
             "BUTLER_API_BASE_URL": settings.butler_api_base_url,
-            "PATH": __import__("os").environ.get("PATH", ""),
+            "PATH": os.environ.get("PATH", ""),
+            # The butler MCP server is `python -m src.mcp_server` — the
+            # subprocess needs PYTHONPATH pointing at the butler repo so
+            # the import resolves. Pass through if the user set it; else
+            # derive from the command path (assumes …/<repo>/.venv/bin/python).
+            "PYTHONPATH": os.environ.get(
+                "BUTLER_MCP_PYTHONPATH",
+                _derive_butler_pythonpath(settings.butler_mcp_command),
+            ),
         }
         if settings.butler_api_token:
             butler_env["BUTLER_API_TOKEN"] = settings.butler_api_token
