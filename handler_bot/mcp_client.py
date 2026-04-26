@@ -38,7 +38,10 @@ class McpServerSpec:
 class _ConnectedServer:
     name: str
     session: ClientSession
-    tool_names: set[str]
+    # Real Anthropic-shaped tool definitions, captured at connect time
+    # from the server's list_tools() response. Each entry is already
+    # namespaced (`{server}__{name}`) for direct passthrough to Claude.
+    tools: list[dict[str, Any]]
 
 
 class McpClient:
@@ -60,10 +63,13 @@ class McpClient:
         await session.initialize()
 
         listing = await session.list_tools()
-        tool_names = {t.name for t in listing.tools}
-        self._servers[spec.name] = _ConnectedServer(spec.name, session, tool_names)
+        tools = [self._to_anthropic_tool(spec.name, t) for t in listing.tools]
+        self._servers[spec.name] = _ConnectedServer(spec.name, session, tools)
         self._tools_cache = None
-        logger.info("MCP server '%s' connected with tools: %s", spec.name, sorted(tool_names))
+        logger.info(
+            "MCP server '%s' connected with tools: %s",
+            spec.name, sorted(t["name"] for t in tools),
+        )
 
     def tools(self) -> list[dict[str, Any]]:
         """Tool definitions in Anthropic API format, namespaced by server."""
@@ -72,22 +78,30 @@ class McpClient:
 
         tools: list[dict[str, Any]] = []
         for server in self._servers.values():
-            # Re-listing here would be async; we cache the names at connect time
-            # but the actual schema fetch happens on the agent's first call.
-            for tool_name in sorted(server.tool_names):
-                tools.append(self._placeholder_tool(server.name, tool_name))
+            tools.extend(server.tools)
         self._tools_cache = tools
         return tools
 
     @staticmethod
-    def _placeholder_tool(server: str, name: str) -> dict[str, Any]:
-        # When a real server is wired in, replace this with the schema returned
-        # by `session.list_tools()`. Keeping it minimal here so the structure is
-        # obvious and the agent code path is exercised end-to-end.
+    def _to_anthropic_tool(server: str, mcp_tool: Any) -> dict[str, Any]:
+        """Convert an mcp.types.Tool into the Anthropic tool schema.
+
+        MCP tools carry an `inputSchema` (JSON Schema). Anthropic's API
+        wants the same JSON Schema under the key `input_schema`. The tool
+        name is namespaced as `{server}__{name}` so call_tool can route.
+        """
+        schema = getattr(mcp_tool, "inputSchema", None) or {
+            "type": "object", "properties": {},
+        }
+        # Anthropic requires `properties` (even if empty) and `type: object`.
+        schema = dict(schema)
+        schema.setdefault("type", "object")
+        schema.setdefault("properties", {})
         return {
-            "name": f"{server}{TOOL_NAMESPACE_SEP}{name}",
-            "description": f"Tool '{name}' from MCP server '{server}'.",
-            "input_schema": {"type": "object", "properties": {}},
+            "name": f"{server}{TOOL_NAMESPACE_SEP}{mcp_tool.name}",
+            "description": (mcp_tool.description or "").strip()
+                or f"Tool '{mcp_tool.name}' from MCP server '{server}'.",
+            "input_schema": schema,
         }
 
     async def call_tool(self, namespaced_name: str, arguments: dict[str, Any]) -> str:
@@ -107,7 +121,7 @@ class McpClient:
 
     @property
     def has_tools(self) -> bool:
-        return any(s.tool_names for s in self._servers.values())
+        return any(s.tools for s in self._servers.values())
 
     async def close(self) -> None:
         await self._exit_stack.aclose()

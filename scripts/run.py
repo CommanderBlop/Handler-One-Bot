@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from handler_bot.agent import HandlerAgent
 from handler_bot.config import Settings
-from handler_bot.mcp_client import McpClient
+from handler_bot.mcp_client import McpClient, McpServerSpec
 from handler_bot.prompt import SYSTEM_PROMPT
 from handler_discord.bot import HandlerDiscordBot
 
@@ -36,9 +36,19 @@ async def _amain() -> None:
     log = logging.getLogger("handler.run")
 
     mcp = McpClient()
-    # When the restaurant MCP server lands, register it here:
-    # await mcp.connect(McpServerSpec(name="restaurant", command="python",
-    #                                 args=["-m", "restaurant_mcp.server"]))
+    if settings.butler_mcp_command:
+        butler_env = {
+            "BUTLER_API_BASE_URL": settings.butler_api_base_url,
+            "PATH": __import__("os").environ.get("PATH", ""),
+        }
+        if settings.butler_api_token:
+            butler_env["BUTLER_API_TOKEN"] = settings.butler_api_token
+        await mcp.connect(McpServerSpec(
+            name="butler",
+            command=settings.butler_mcp_command,
+            args=[a for a in settings.butler_mcp_args.split() if a],
+            env=butler_env,
+        ))
 
     agent = HandlerAgent(
         api_key=settings.anthropic_api_key,
