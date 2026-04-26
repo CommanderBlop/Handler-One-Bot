@@ -1,4 +1,5 @@
-"""Discord client — listens for mentions/DMs and routes to the Claude agent."""
+"""Discord client — listens for mentions/DMs, hydrates context from channel
+history, dispatches to the stateless Claude agent."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import discord
 from handler_bot.agent import HandlerAgent
 
 from .chunker import chunk_for_discord
+from .history import fetch_messages
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ class HandlerDiscordBot(discord.Client):
         self,
         *,
         agent: HandlerAgent,
+        history_limit: int,
         query_timeout: int,
         allowed_user_ids: set[int],
         allowed_guild_ids: set[int],
@@ -31,6 +34,7 @@ class HandlerDiscordBot(discord.Client):
         super().__init__(intents=intents)
 
         self._agent = agent
+        self._history_limit = history_limit
         self._query_timeout = query_timeout
         self._allowed_users = allowed_user_ids
         self._allowed_guilds = allowed_guild_ids
@@ -38,18 +42,14 @@ class HandlerDiscordBot(discord.Client):
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (id=%s)", self.user, self.user.id if self.user else "?")
         logger.info(
-            "Listening: %d guild(s), allowlist users=%s guilds=%s",
+            "Listening: %d guild(s), allowlist users=%s guilds=%s, history=%d msgs/turn",
             len(self.guilds),
             self._allowed_users or "any",
             self._allowed_guilds or "any",
+            self._history_limit,
         )
 
     async def on_message(self, message: discord.Message) -> None:
-        logger.debug(
-            "on_message: author=%s bot=%s channel=%s mentions=%s content=%r",
-            message.author, message.author.bot, message.channel.id,
-            [u.id for u in message.mentions], message.content[:80],
-        )
         if message.author.bot or self.user is None:
             return
 
@@ -62,21 +62,17 @@ class HandlerDiscordBot(discord.Client):
             logger.info("Rejecting unauthorized message from %s", message.author.id)
             return
 
-        prompt = self._strip_mention(message.content)
-        if not prompt:
-            await message.channel.send(f"Hey {message.author.mention} — ask me something.")
-            return
-
-        if prompt.lower().strip() in {"!reset", "!clear", "/reset"}:
-            self._agent.reset(self._conversation_key(message))
-            await message.channel.send("Conversation reset.")
-            return
-
         async with message.channel.typing():
             try:
+                messages = await fetch_messages(
+                    message.channel, self.user.id, self._history_limit
+                )
+                if not messages:
+                    await message.channel.send("(no message history to work with — try again)")
+                    return
+
                 reply = await asyncio.wait_for(
-                    self._agent.ask(self._conversation_key(message), prompt),
-                    timeout=self._query_timeout,
+                    self._agent.reply(messages), timeout=self._query_timeout
                 )
             except asyncio.TimeoutError:
                 await message.channel.send(
@@ -93,12 +89,13 @@ class HandlerDiscordBot(discord.Client):
 
         if not reply.is_complete:
             await message.channel.send(
-                "_(Hit the tool-call limit before I was done. Reply for more, or `!reset`.)_"
+                "_(Hit the tool-call limit before finishing. Ask again to keep going.)_"
             )
 
         logger.info(
-            "answered chat=%s iters=%d in=%d out=%d cache_read=%d",
-            self._conversation_key(message),
+            "answered chan=%s msgs=%d iters=%d in=%d out=%d cache_read=%d",
+            message.channel.id,
+            len(messages),
             reply.iterations_used,
             reply.input_tokens,
             reply.output_tokens,
@@ -111,15 +108,3 @@ class HandlerDiscordBot(discord.Client):
         if self._allowed_guilds and message.guild and message.guild.id not in self._allowed_guilds:
             return False
         return True
-
-    def _strip_mention(self, content: str) -> str:
-        if self.user is None:
-            return content.strip()
-        for tag in (f"<@{self.user.id}>", f"<@!{self.user.id}>"):
-            content = content.replace(tag, "")
-        return content.strip()
-
-    @staticmethod
-    def _conversation_key(message: discord.Message) -> str:
-        # Threads, DMs, and guild channels each get their own bucket.
-        return f"chan:{message.channel.id}"

@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     claude_max_tokens: int = 8000
     claude_effort: str = "high"
 
-    handler_max_history: int = 20
+    handler_history_fetch_limit: int = 30
     handler_query_timeout: int = 120
 
     allowed_user_ids: str = ""

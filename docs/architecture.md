@@ -1,20 +1,22 @@
 # Architecture
 
-## Two layers, one MCP plug
+## Two layers, one MCP plug — Discord is the source of truth
 
 ```
 +--------------------------------------------------+
 |              handler_discord (frontend)          |
 |  - discord.py Client + Intents                   |
-|  - on_message: mentions, DMs, !reset             |
+|  - on_message: mentions, DMs                     |
+|  - history.fetch_messages: pull last N messages, |
+|    format with [Name]: prefixes, merge runs      |
 |  - typing indicator + 2000-char chunking         |
 +----------------------+---------------------------+
-                       |  agent.ask(channel_id, text)
+                       |  agent.reply(messages)
                        v
 +--------------------------------------------------+
 |             handler_bot (brain)                  |
 |  - HandlerAgent: AsyncAnthropic + tool loop      |
-|  - ConversationStore: per-channel history (TTL)  |
+|  - Stateless — no conversation store             |
 |  - McpClient: multi-server MCP foundation        |
 |  - prompt.py: system prompt (cached)             |
 +----------------------+---------------------------+
@@ -22,7 +24,7 @@
                        v
               +---------------------+
               |  Anthropic API      |
-              |  Claude Opus 4.7    |
+              |  Claude Haiku 4.5   |
               +---------------------+
 
   (Future) handler_bot.mcp_client connects to:
@@ -39,29 +41,54 @@ know nothing about Discord. That makes it trivial to:
 - Swap the frontend (a CLI, a web UI, Slack) without touching the agent.
 - Reuse the same agent for multiple frontends in the future.
 
-## Conversation state
+## Statelessness — option 3
 
-History is keyed by Discord channel/thread ID. Each channel is its own
-conversation — DMs, threads, and guild channels each get their own bucket.
-History is in-memory only (good enough for personal use); restart clears it.
-TTL eviction caps memory at ~500 conversations × 20 turns.
+Every time the bot is mentioned, `history.fetch_messages` pulls the last
+`HANDLER_HISTORY_FETCH_LIMIT` messages (default 30) from the Discord channel
+via `channel.history()` and converts them to the Anthropic format:
 
-`!reset` drops the bucket on demand.
+- Bot's own messages → `role: assistant`
+- Anyone else's messages → `role: user`, content prefixed with `[Display Name]:`
+- Consecutive same-role messages are merged into one turn (the API rejects two
+  user-turns or two assistant-turns in a row)
+- Leading assistant messages are dropped (the API requires the first message
+  to be user)
+
+The agent gets a complete, fresh messages list every call. No in-memory
+conversation store. No persistence layer. No drift.
+
+**Why this works well:**
+
+- **Restart-safe**: bot crashes mid-conversation? Restart, mention it again,
+  it picks up exactly where it left off because Discord remembers everything.
+- **Multi-speaker by default**: the bot sees everything in the channel, not
+  just messages addressed to it. Asking "what was Bob's point?" works.
+- **No hidden state**: what you see in the channel is what the bot sees. No
+  bugs from the bot remembering something that was edited or deleted.
+- **Memory-cheap**: no per-channel buckets to evict. Server-friendly.
+
+**The tradeoff**: one extra Discord REST call per mention (~50-100ms). For a
+personal-use bot the latency is invisible; for a high-traffic public bot you'd
+want a different design.
 
 ## Prompt caching
 
 The system prompt is wrapped in a system block with `cache_control:
-{type: "ephemeral"}`. This caches the system prompt + tool definitions across
-turns within the 5-minute TTL window. Verify hits via `usage.cache_read_input_tokens`
-in the logs. The system prompt must stay byte-stable — don't interpolate
-timestamps or per-user data into it, or the cache invalidates.
+{type: "ephemeral"}`. Caches the system prompt (and any tool definitions)
+across turns within the 5-minute TTL. Verify hits via
+`usage.cache_read_input_tokens` in the logs. The system prompt must stay
+byte-stable — don't interpolate timestamps or per-user data into it.
+
+The conversation history itself is NOT cached. Channel history changes every
+turn (new messages arrive), so caching it would just write-then-discard.
 
 ## Tool loop
 
 When the MCP client has tools, every `messages.create()` may return
 `stop_reason="tool_use"`. The loop:
 
-1. Append the assistant message (including tool_use blocks) to history.
+1. Append the assistant message (including tool_use blocks) to the working
+   messages list.
 2. Execute each tool_use block via the MCP client.
 3. Append a user message containing all tool_result blocks.
 4. Loop. Cap at 15 iterations.
@@ -71,7 +98,7 @@ expose tools with the same local name without collisions.
 
 ## Adding the restaurant MCP server
 
-When the restaurant MCP server is built, two lines in `scripts/run.py`:
+Two lines in `scripts/run.py`:
 
 ```python
 from handler_bot.mcp_client import McpServerSpec
@@ -107,17 +134,4 @@ in `.env` is enough; no code change.
 
 The image is `python:3.12-slim`-based and ends up around ~250MB. No ports are
 exposed because the bot dials out to Discord; no host volumes are needed
-because conversation state is intentionally ephemeral.
-
-## What's intentionally NOT here
-
-- **Persistent conversation storage.** In-memory is the right call for a
-  friend-group bot. Restart = fresh slate, which is also useful when the prompt
-  changes.
-- **Slash commands.** Mention + DM handling is enough to start. Slash commands
-  are easy to add later via `discord.app_commands` once the use case is clear.
-- **Streaming.** Discord doesn't support live edits well, and for chat-length
-  responses the latency is fine. We can add streaming later if a use case
-  appears.
-- **Cost tracking dashboard.** Logged per-turn for now; a real dashboard isn't
-  worth building unless friends start hammering the bot.
+because the bot is stateless.

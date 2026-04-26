@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 
 from handler_bot.agent import HandlerAgent
 from handler_bot.config import Settings
-from handler_bot.conversation import ConversationStore
 from handler_bot.mcp_client import McpClient
 from handler_bot.prompt import SYSTEM_PROMPT
 from handler_discord.bot import HandlerDiscordBot
@@ -41,19 +40,18 @@ async def _amain() -> None:
     # await mcp.connect(McpServerSpec(name="restaurant", command="python",
     #                                 args=["-m", "restaurant_mcp.server"]))
 
-    conversations = ConversationStore(max_history=settings.handler_max_history)
     agent = HandlerAgent(
         api_key=settings.anthropic_api_key,
         model=settings.claude_model,
         max_tokens=settings.claude_max_tokens,
         effort=settings.claude_effort,
         system_prompt=SYSTEM_PROMPT,
-        conversations=conversations,
         mcp=mcp,
     )
 
     bot = HandlerDiscordBot(
         agent=agent,
+        history_limit=settings.handler_history_fetch_limit,
         query_timeout=settings.handler_query_timeout,
         allowed_user_ids=settings.allowed_user_id_set,
         allowed_guild_ids=settings.allowed_guild_id_set,

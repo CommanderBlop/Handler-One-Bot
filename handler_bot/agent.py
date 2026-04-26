@@ -1,10 +1,8 @@
-"""Claude agent — async messages.create with optional MCP tool loop.
+"""Stateless Claude agent.
 
-Uses claude-opus-4-7 by default with adaptive thinking. The system prompt is
-prompt-cached via top-level ``cache_control`` so repeated turns reuse the same
-prefix. When the MCP client has tools, this runs an agentic loop — assistant
-asks for a tool, we execute it, feed the result back, repeat until the model
-returns ``end_turn``.
+Takes a pre-built messages list from the caller. The Discord layer is responsible
+for hydrating context from channel history (option 3 — Discord is the source of
+truth, the agent holds no conversation state).
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 
-from .conversation import ConversationStore
 from .mcp_client import McpClient
 
 logger = logging.getLogger(__name__)
@@ -36,7 +33,7 @@ class AgentReply:
 
 
 class HandlerAgent:
-    """Wraps the Anthropic client + conversation store + MCP tools."""
+    """Wraps the Anthropic client + MCP tools. No conversation state."""
 
     def __init__(
         self,
@@ -46,7 +43,6 @@ class HandlerAgent:
         max_tokens: int,
         effort: str,
         system_prompt: str,
-        conversations: ConversationStore,
         mcp: McpClient,
     ) -> None:
         self._client = AsyncAnthropic(api_key=api_key)
@@ -54,16 +50,20 @@ class HandlerAgent:
         self._max_tokens = max_tokens
         self._effort = effort
         self._system_prompt = system_prompt
-        self._conversations = conversations
         self._mcp = mcp
 
-    async def ask(self, conversation_key: str, question: str) -> AgentReply:
-        convo = self._conversations.get(conversation_key)
-        convo.messages.append({"role": "user", "content": question})
+    async def reply(self, messages: list[dict[str, Any]]) -> AgentReply:
+        """Run the agentic loop against the given messages and return the final text.
 
+        ``messages`` must already follow the Anthropic alternation rule
+        (first message role=user, then strict user/assistant alternation). The
+        Discord layer is responsible for building this from channel history.
+        """
+        working = list(messages)
         tools = self._mcp.tools()
         total_input = total_output = total_cache_read = total_cache_create = 0
         iterations = 0
+        response = None
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             iterations = iteration + 1
@@ -80,11 +80,9 @@ class HandlerAgent:
                         "cache_control": {"type": "ephemeral"},
                     }
                 ],
-                messages=convo.messages,
+                messages=working,
                 **extra,
             )
-
-            convo.messages.append({"role": "assistant", "content": response.content})
 
             usage = getattr(response, "usage", None)
             if usage is not None:
@@ -94,7 +92,6 @@ class HandlerAgent:
                 total_cache_create += getattr(usage, "cache_creation_input_tokens", 0)
 
             if response.stop_reason == "end_turn":
-                self._conversations.trim(conversation_key)
                 return AgentReply(
                     text=_extract_text(response.content),
                     is_complete=True,
@@ -106,16 +103,17 @@ class HandlerAgent:
                 )
 
             if response.stop_reason == "tool_use":
+                working.append({"role": "assistant", "content": response.content})
                 tool_results = await self._run_tools(response.content)
-                convo.messages.append({"role": "user", "content": tool_results})
+                working.append({"role": "user", "content": tool_results})
                 continue
 
             logger.warning("Unexpected stop_reason=%s, ending loop", response.stop_reason)
             break
 
-        self._conversations.trim(conversation_key)
+        text = _extract_text(response.content) if response is not None else ""
         return AgentReply(
-            text=_extract_text(response.content) or "I ran out of tool budget before finishing. Try a more specific question.",
+            text=text or "I ran out of tool budget before finishing. Try a more specific question.",
             is_complete=False,
             iterations_used=iterations,
             input_tokens=total_input,
@@ -124,18 +122,10 @@ class HandlerAgent:
             cache_creation_tokens=total_cache_create,
         )
 
-    def reset(self, conversation_key: str) -> bool:
-        return self._conversations.reset(conversation_key)
-
     def _opus_params(self) -> dict[str, Any]:
-        # Adaptive thinking is the on-mode for Opus 4.7. Sampling params (temperature,
-        # top_p, top_k) are removed on Opus 4.7 — don't pass them.
-        if self._model.startswith("claude-opus-4-7"):
-            return {
-                "thinking": {"type": "adaptive"},
-                "output_config": {"effort": self._effort},
-            }
-        if self._model.startswith(("claude-opus-4-6", "claude-sonnet-4-6")):
+        # Adaptive thinking + effort apply to Opus 4.6/4.7 and Sonnet 4.6.
+        # Haiku 4.5 doesn't support effort (returns 400) and we don't pass thinking.
+        if self._model.startswith(("claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6")):
             return {
                 "thinking": {"type": "adaptive"},
                 "output_config": {"effort": self._effort},

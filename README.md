@@ -12,16 +12,19 @@ Discord  <->  handler_discord  <->  handler_bot  <->  Anthropic API (Claude)
                                           +---->  MCP servers (future: restaurant)
 ```
 
-- **`handler_bot/`** — Claude agent layer. `agent.py` runs the async messages
-  loop with prompt caching + adaptive thinking; `mcp_client.py` is the
-  multi-server MCP client; `conversation.py` keeps per-channel history.
-- **`handler_discord/`** — Discord layer. `bot.py` listens for mentions/DMs and
-  dispatches to the agent; `chunker.py` splits long replies to fit the 2000-char
-  message cap.
+- **`handler_bot/`** — Stateless Claude agent layer. `agent.py` runs the async
+  messages loop with prompt caching; `mcp_client.py` is the multi-server MCP
+  foundation. No conversation state lives here.
+- **`handler_discord/`** — Discord layer. `bot.py` listens for mentions/DMs;
+  `history.py` fetches recent channel messages and converts them to the
+  Anthropic format (multi-speaker `[Name]:` prefix); `chunker.py` splits long
+  replies to fit the 2000-char message cap.
 - **`scripts/run.py`** — Entry point. Wires everything together.
 
-The bot uses `claude-opus-4-7` by default with adaptive thinking. The system
-prompt is prompt-cached (top-level `cache_control`) so per-turn cost stays low.
+The bot is stateless: every turn it fetches the last N messages from the
+Discord channel and passes them to Claude. Discord is the source of truth, so
+the bot is restart-safe and can't drift out of sync. The system prompt is
+prompt-cached (top-level `cache_control`) so per-turn cost stays low.
 
 ## Setup
 
@@ -77,15 +80,9 @@ relevant knobs:
 | `CLAUDE_MODEL`       | `claude-haiku-4-5`   | Or `claude-sonnet-4-6` / `claude-opus-4-7`       |
 | `CLAUDE_MAX_TOKENS`  | `8000`               | Per-response output cap                          |
 | `CLAUDE_EFFORT`      | `high`               | `low` / `medium` / `high` / `xhigh` / `max`      |
-| `HANDLER_MAX_HISTORY`| `20`                 | Conversation turns kept per channel              |
+| `HANDLER_HISTORY_FETCH_LIMIT` | `30`        | Discord messages fetched as context per turn     |
 | `ALLOWED_USER_IDS`   | (any)                | Comma-separated; empty = anyone                  |
 | `ALLOWED_GUILD_IDS`  | (any)                | Comma-separated; empty = any server              |
-
-## Chat commands
-
-Inside any conversation with the bot:
-
-- `!reset` (or `!clear`) — drop the conversation history for this channel.
 
 ## Roadmap
 
@@ -98,14 +95,14 @@ Inside any conversation with the bot:
 
 ```
 handler-one-discord-bot/
-├── handler_bot/              # Claude agent layer
+├── handler_bot/              # Stateless Claude agent layer
 │   ├── agent.py              # Async messages loop, prompt caching, tool dispatch
-│   ├── conversation.py       # Per-channel history with TTL eviction
 │   ├── mcp_client.py         # Multi-server MCP foundation
 │   ├── prompt.py             # System prompt
 │   └── config.py             # pydantic-settings env loader
 ├── handler_discord/          # Discord layer
 │   ├── bot.py                # discord.py client, mention/DM handling
+│   ├── history.py            # Fetches channel history, formats for Anthropic
 │   └── chunker.py            # 2000-char chunking with code-fence repair
 ├── scripts/run.py            # Entry point
 ├── docs/architecture.md      # Design notes
