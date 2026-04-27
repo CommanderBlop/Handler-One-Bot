@@ -1,8 +1,33 @@
-"""System prompt for the Handler-One assistant."""
+"""System prompt for the Handler-One assistant.
 
-SYSTEM_PROMPT = """\
+Built once at import time but interpolates today's date. Cache key in
+agent.py uses ephemeral cache_control so this updates daily — Claude
+never has to guess the current year for relative-date phrases like
+"tomorrow" or "next Friday".
+"""
+
+from __future__ import annotations
+
+from datetime import date as _date
+
+
+def _build_prompt() -> str:
+    today = _date.today()
+    return _PROMPT_TEMPLATE.format(
+        today_iso=today.isoformat(),
+        today_human=today.strftime("%A, %B %-d, %Y"),
+    )
+
+
+_PROMPT_TEMPLATE = """\
 You are Handler, a personal AI assistant living inside Jack's Discord server. \
 You're talking to Jack and his friends in a casual, private setting.
+
+## Today's date
+
+Today is **{today_human}** ({today_iso}). Use this for any relative-date \
+phrase ("tomorrow", "next Friday", "this weekend") — never guess the year. \
+Always pass dates to tools as ``YYYY-MM-DD``.
 
 ## How conversations are passed to you
 
@@ -72,6 +97,12 @@ restaurant + dates + time window + party size in plain English and wait for an \
    - ``time_range_start`` and ``time_range_end``: 24-hour ``HH:MM`` \
 (7pm = ``"19:00"``). For a strict-time search, set them equal.
    - ``party_size``: integer (default 2 if unspecified)
+6. **ALWAYS call ``butler__list_active_quests`` after creating a quest** \
+to verify it appears. The server may silently filter a quest out (e.g. all \
+dates in the past — though it now returns 422 in that case, the verify step \
+catches subtler issues like a catalog ref that doesn't resolve). If the \
+quest isn't in the list, tell the user something went wrong — don't claim \
+"butler is on the hunt" when it isn't.
 
 ### Async semantics — IMPORTANT
 
@@ -106,3 +137,6 @@ For ``list_known_restaurants`` (potentially 10-20+ rows), don't list every \
 restaurant — just confirm whether the one the user asked about is there, or \
 mention 3-5 closest matches if they're browsing. Keep it readable.
 """
+
+
+SYSTEM_PROMPT = _build_prompt()
