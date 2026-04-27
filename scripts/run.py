@@ -17,10 +17,15 @@ from handler_discord.bot import HandlerDiscordBot
 
 
 def _derive_butler_pythonpath(command: str) -> str:
-    """Best-effort: …/<repo>/.venv/bin/python → …/<repo>."""
+    """Best-effort: …/<repo>/.venv/bin/python → …/<repo>.
+
+    Use the *lexical* path (no symlink resolution): on macOS especially,
+    ``.venv/bin/python`` is typically a symlink to the system interpreter,
+    so ``.resolve()`` would walk us off the venv into the brew/system tree
+    and break the heuristic. Override with BUTLER_MCP_PYTHONPATH if needed.
+    """
     from pathlib import Path
-    p = Path(command).resolve()
-    # If the command is .venv/bin/python, walk up two for .venv, one more for repo.
+    p = Path(command).absolute()  # absolute, NOT resolve — preserve symlinks
     if p.parent.name == "bin" and p.parent.parent.name == ".venv":
         return str(p.parent.parent.parent)
     return str(p.parent)
