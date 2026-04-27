@@ -84,10 +84,37 @@ relevant knobs:
 | `ALLOWED_USER_IDS`   | (any)                | Comma-separated; empty = anyone                  |
 | `ALLOWED_GUILD_IDS`  | (any)                | Comma-separated; empty = any server              |
 
+## Restaurant reservations (Butler integration)
+
+Handler can drive [restaurant-butler](https://github.com/jackieinclair/restaurant-butler)
+— a separate daemon that polls OpenTable and auto-books reservations when a
+slot opens. When wired in, Claude gets `butler__*` tools for searching
+OpenTable, managing the local restaurant catalog, creating reservation hunts
+("quests"), and listing past/current bookings.
+
+To enable: set the `BUTLER_*` vars in `.env`. The most important is
+`BUTLER_MCP_COMMAND`, which should point at the butler repo's venv python so
+the MCP subprocess has butler's dependencies. Example:
+
+```
+BUTLER_MCP_COMMAND=/Users/zakiaserver/Documents/restaurant-butler/.venv/bin/python
+BUTLER_MCP_ARGS=-m src.mcp_server
+BUTLER_API_BASE_URL=http://zakia-server.local:8765
+```
+
+Leave `BUTLER_MCP_COMMAND` blank to disable; the bot falls back to plain
+chat-only mode.
+
+**Docker caveat:** the butler subprocess is launched on the host filesystem
+path you give it. The container can't see that path, so running handler-bot
+inside docker with butler enabled won't work. Either run handler-bot natively
+on the same host as butler (current setup), or expose butler's MCP server over
+a network transport later (TODO).
+
 ## Roadmap
 
 - [x] Bot layer + Discord layer + Claude integration
-- [ ] Restaurant reservation MCP server connection (separate project, plugs into `handler_bot/mcp_client.py`)
+- [x] Restaurant reservation MCP server connection (butler)
 - [ ] Web search + web fetch (Anthropic server-side tools)
 - [ ] Slash commands
 
