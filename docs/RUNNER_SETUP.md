@@ -39,6 +39,53 @@ In `Settings → Actions → Runners → Runner groups → Default`:
 - Make sure the runner is restricted to this repository only (default for
   free/Pro accounts).
 
+## Install the bot as a launchd agent
+
+The deploy workflow assumes the bot is already running under its own launchd
+agent (`com.handler.bot`). The workflow `kickstart -k`s the agent to apply
+new code; `KeepAlive=true` in the plist respawns the bot with the fresh
+binaries. This decouples the bot's lifetime from the runner — the previous
+"nohup it from the deploy step" approach lost the bot when the runner
+cleaned up its tracked subprocesses at step exit.
+
+Install (one-time, on the server):
+
+```bash
+ssh zakia-server '
+  set -e
+  sed "s|__HOME__|$HOME|g" \
+    ~/handler-one-bot/scripts/launchd/com.handler.bot.plist \
+    > ~/Library/LaunchAgents/com.handler.bot.plist
+  launchctl bootout "gui/$(id -u)/com.handler.bot" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.handler.bot.plist
+  launchctl enable "gui/$(id -u)/com.handler.bot"
+  launchctl kickstart -k "gui/$(id -u)/com.handler.bot"
+'
+```
+
+Verify:
+
+```bash
+ssh zakia-server "launchctl print 'gui/$(id -u)/com.handler.bot' | grep -E 'state|pid'"
+# expect: state = running / pid = <some pid>
+```
+
+Day-to-day:
+
+```bash
+# Restart manually (without redeploying)
+ssh zakia-server "launchctl kickstart -k 'gui/$(id -u)/com.handler.bot'"
+
+# Stop temporarily (until next reboot or deploy)
+ssh zakia-server "launchctl stop com.handler.bot"
+
+# Stop and disable (won't restart on login)
+ssh zakia-server "launchctl bootout 'gui/$(id -u)/com.handler.bot'"
+
+# Tail logs
+ssh zakia-server "tail -f ~/handler-one-bot/handler.log"
+```
+
 ## Install the runner
 
 The release version below was current at setup. Bump to the latest from

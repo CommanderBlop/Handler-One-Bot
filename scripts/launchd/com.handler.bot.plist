@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd LaunchAgent for the Handler-One Discord bot.
+
+  Runs the bot as a self-restarting daemon, independent of the GitHub
+  Actions runner. The deploy workflow (.github/workflows/deploy.yml)
+  rsyncs new code into ~/handler-one-bot/ and then signals this agent
+  with `launchctl kickstart -k gui/<uid>/com.handler.bot`, which kills
+  the current bot process; KeepAlive=true respawns it with the fresh code.
+
+  Install (one-time, on the server):
+    cp scripts/launchd/com.handler.bot.plist ~/Library/LaunchAgents/
+    sed -i '' "s|__HOME__|$HOME|g" ~/Library/LaunchAgents/com.handler.bot.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.handler.bot.plist
+    launchctl enable gui/$(id -u)/com.handler.bot
+    launchctl kickstart -k gui/$(id -u)/com.handler.bot
+
+  Uninstall:
+    launchctl bootout gui/$(id -u)/com.handler.bot
+    rm ~/Library/LaunchAgents/com.handler.bot.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.handler.bot</string>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__/handler-one-bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/handler-one-bot/.venv/bin/python</string>
+        <string>-m</string>
+        <string>scripts.run</string>
+    </array>
+
+    <!-- Logs go to handler.log, replacing the previous nohup-based setup. -->
+    <key>StandardOutPath</key>
+    <string>__HOME__/handler-one-bot/handler.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/handler-one-bot/handler.log</string>
+
+    <!-- Auto-restart on crash and on user login. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Mark as background so the OS doesn't deprioritize it like a foreground app. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

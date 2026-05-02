@@ -46,17 +46,15 @@ jobs:
           .venv/bin/pip install --quiet -e .
 
       - name: Restart bot
-        # Subshell + nohup detaches from the runner step's process group so
-        # the bot survives this step exiting. The runner kills its own
-        # children when the step ends; double-fork via subshell + & avoids
-        # that.
+        # The bot runs as a launchd LaunchAgent (com.handler.bot, installed
+        # one-time via scripts/launchd/com.handler.bot.plist). `kickstart -k`
+        # SIGKILLs the running bot; KeepAlive=true respawns it with the
+        # freshly-rsynced code. This decouples the bot's lifetime from the
+        # runner step — the previous nohup approach lost the bot when the
+        # runner cleaned up its tracked processes.
         run: |
-          pkill -f 'scripts.run' || true
-          pkill -f 'src.mcp_server' || true
-          sleep 1
-          cd ~/handler-one-bot
-          rm -f handler.log
-          ( nohup .venv/bin/python -m scripts.run </dev/null >handler.log 2>&1 & disown ) &
+          : > ~/handler-one-bot/handler.log
+          launchctl kickstart -k "gui/$(id -u)/com.handler.bot"
 
       - name: Smoke check
         # Tail the log until we see "Logged in as" (Discord handshake) or
