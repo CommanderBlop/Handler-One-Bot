@@ -5,7 +5,7 @@ SSHs into your server" deploy pattern doesn't work. Instead we install
 GitHub's self-hosted runner on the server: it dials out to GitHub and polls
 for jobs. When you push to `main`, the runner picks up the job and runs
 `.github/workflows/deploy.yml` *locally* on the server — `rsync` to
-`~/Documents/Handler-One-Bot/`, `pip install`, restart the bot.
+`~/handler-one-bot/`, `pip install`, restart the bot.
 
 This doc covers replicating the runner setup on a fresh machine. The
 workflow itself is in [`../.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
@@ -13,12 +13,17 @@ workflow itself is in [`../.github/workflows/deploy.yml`](../.github/workflows/d
 ## Prerequisites on the host
 
 - macOS 12+ (Apple Silicon or Intel; this guide assumes arm64)
-- The repo cloned to `~/Documents/Handler-One-Bot/` with a working
+- The repo cloned to `~/handler-one-bot/` with a working
   `.venv/` and a populated `.env`. See the [main README](../README.md)
   for that setup.
 - The bot already runs successfully via
-  `~/Documents/Handler-One-Bot/.venv/bin/python -m scripts.run`. Get this
+  `~/handler-one-bot/.venv/bin/python -m scripts.run`. Get this
   green before adding the runner — debugging two layers at once is no fun.
+- **Don't install under `~/Documents/`, `~/Desktop/`, or `~/Downloads/`.**
+  macOS TCC silently blocks launchd-spawned processes (which the runner is)
+  from writing to those locations. Symptom: rsync hangs forever with no
+  output and the workflow times out. Stick to `~/handler-one-bot/` (or any
+  non-TCC-protected path).
 
 ## One-time GitHub repo settings
 
@@ -105,7 +110,7 @@ ssh zakia-server "cd ~/actions-runner && ./svc.sh start"
 ssh zakia-server "tail -f ~/Library/Logs/actions.runner.CommanderBlop-Handler-One-Bot.zakia-server/*.log"
 
 # Tail the bot logs (what the deploy workflow writes)
-ssh zakia-server "tail -f ~/Documents/Handler-One-Bot/handler.log"
+ssh zakia-server "tail -f ~/handler-one-bot/handler.log"
 ```
 
 To trigger a manual deploy without pushing code: in the GitHub UI, go to
@@ -132,6 +137,50 @@ To trigger a manual deploy without pushing code: in the GitHub UI, go to
   `launchctl kickstart -k <label>` instead of `pkill` + `nohup`.
 - **Secrets stay on the host.** `.env` is in the rsync exclude list, so
   the workflow can never overwrite or read it. No GitHub Secrets needed.
+
+## Troubleshooting
+
+### TCC: rsync hangs forever, workflow times out
+
+macOS Transparency, Consent, and Control (TCC) protects `~/Documents/`,
+`~/Desktop/`, `~/Downloads/`, network volumes, etc. Any process launched
+from a launchd agent (which the runner is) gets a TCC profile that lacks
+access to those locations by default. When such a process tries to read
+or write a TCC-protected path, **macOS doesn't return EPERM** — it sends
+a permission prompt to the user's GUI session. Headless launchd processes
+have no GUI session, so the syscall blocks indefinitely.
+
+Symptom in this repo: the `Sync working tree` step in `deploy.yml`
+produces no output for 5 minutes and gets killed by `timeout-minutes`.
+
+Two ways to fix:
+
+1. **Keep your install paths off TCC-protected dirs (recommended).**
+   This repo installs to `~/handler-one-bot/`, not `~/Documents/`, for
+   exactly this reason. If you reference any other path that lives under
+   `~/Documents/` (e.g. an external MCP server's working dir), the same
+   problem will hit when the bot tries to read it.
+
+2. **Grant the runner Full Disk Access (FDA).** On the Mac mini directly
+   (or via Screen Sharing), open **System Settings → Privacy & Security →
+   Full Disk Access**, click **+**, and add `~/actions-runner/runsvc.sh`
+   (or the runner agent itself). After adding, restart the runner:
+   `cd ~/actions-runner && ./svc.sh stop && ./svc.sh start`. Verify with
+   a workflow run that touches a Documents path.
+
+   You can sanity-check the current TCC grants with:
+   ```bash
+   sqlite3 ~/Library/Application\ Support/com.apple.TCC/TCC.db \
+     'SELECT client, service, auth_value FROM access
+      WHERE service LIKE "%FullDisk%" OR service LIKE "%Documents%";'
+   ```
+
+### Bot crashes on butler MCP startup after deploy
+
+If `BUTLER_MCP_COMMAND` in `.env` points at a path under `~/Documents/`
+and you haven't granted FDA to the runner, the bot will start but fail
+to spawn butler MCP. Either move butler out of `~/Documents/` too, or
+grant FDA per the previous section.
 
 ## Removing the runner
 

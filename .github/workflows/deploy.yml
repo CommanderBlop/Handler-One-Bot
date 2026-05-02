@@ -20,15 +20,20 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Sync working tree to ~/Documents/Handler-One-Bot/
+      - name: Sync working tree to ~/handler-one-bot/
         # rsync, not git pull: keeps the canonical install dir on disk
         # decoupled from where the runner cloned. Excludes the on-server
         # state we never want overwritten by a deploy:
         #   .env   — secrets, only ever edited on the host
         #   .venv  — local virtualenv, repo-side has no idea about it
         #   *.log  — runtime logs
+        #
+        # NOTE: install path is NOT under ~/Documents/. macOS TCC blocks
+        # launchd-spawned processes (which the runner is) from writing to
+        # ~/Documents/, ~/Desktop/, etc. — silently, with no error.
+        # See docs/RUNNER_SETUP.md → Troubleshooting → TCC.
         run: |
-          rsync -a --delete ./ ~/Documents/Handler-One-Bot/ \
+          rsync -a --delete ./ ~/handler-one-bot/ \
             --exclude .git \
             --exclude .env \
             --exclude .venv \
@@ -37,7 +42,7 @@ jobs:
       - name: Install / update dependencies
         # `pip install -e .` is idempotent — only reinstalls if pyproject changes.
         run: |
-          cd ~/Documents/Handler-One-Bot
+          cd ~/handler-one-bot
           .venv/bin/pip install --quiet -e .
 
       - name: Restart bot
@@ -49,7 +54,7 @@ jobs:
           pkill -f 'scripts.run' || true
           pkill -f 'src.mcp_server' || true
           sleep 1
-          cd ~/Documents/Handler-One-Bot
+          cd ~/handler-one-bot
           rm -f handler.log
           ( nohup .venv/bin/python -m scripts.run </dev/null >handler.log 2>&1 & disown ) &
 
@@ -59,18 +64,18 @@ jobs:
         # butler MCP subprocess.
         run: |
           for i in {1..30}; do
-            if grep -q 'Logged in as' ~/Documents/Handler-One-Bot/handler.log 2>/dev/null; then
+            if grep -q 'Logged in as' ~/handler-one-bot/handler.log 2>/dev/null; then
               echo "✓ bot logged in"
-              tail -5 ~/Documents/Handler-One-Bot/handler.log
+              tail -5 ~/handler-one-bot/handler.log
               exit 0
             fi
-            if grep -q 'Traceback\|Error while finding' ~/Documents/Handler-One-Bot/handler.log 2>/dev/null; then
+            if grep -q 'Traceback\|Error while finding' ~/handler-one-bot/handler.log 2>/dev/null; then
               echo "✗ bot crashed during startup"
-              tail -50 ~/Documents/Handler-One-Bot/handler.log
+              tail -50 ~/handler-one-bot/handler.log
               exit 1
             fi
             sleep 1
           done
           echo "✗ bot didn't log in within 30s"
-          tail -50 ~/Documents/Handler-One-Bot/handler.log || true
+          tail -50 ~/handler-one-bot/handler.log || true
           exit 1

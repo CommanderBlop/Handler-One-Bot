@@ -116,7 +116,7 @@ a network transport later (TODO).
 Production runs on a Mac mini at home (`zakia-server`). A self-hosted GitHub
 Actions runner on that host watches `main`; every push triggers
 [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) which
-rsyncs the new code to `~/Documents/Handler-One-Bot/`, refreshes deps, and
+rsyncs the new code to `~/handler-one-bot/`, refreshes deps, and
 restarts the bot. The bot's `.env` and `.venv/` stay on the host and are
 never touched by the workflow.
 
