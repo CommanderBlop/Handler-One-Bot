@@ -111,10 +111,23 @@ inside docker with butler enabled won't work. Either run handler-bot natively
 on the same host as butler (current setup), or expose butler's MCP server over
 a network transport later (TODO).
 
+## Continuous deployment
+
+Production runs on a Mac mini at home (`zakia-server`). A self-hosted GitHub
+Actions runner on that host watches `main`; every push triggers
+[`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) which
+rsyncs the new code to `~/Documents/Handler-One-Bot/`, refreshes deps, and
+restarts the bot. The bot's `.env` and `.venv/` stay on the host and are
+never touched by the workflow.
+
+Replicating the runner on a new host: see
+[docs/RUNNER_SETUP.md](./docs/RUNNER_SETUP.md).
+
 ## Roadmap
 
 - [x] Bot layer + Discord layer + Claude integration
 - [x] Restaurant reservation MCP server connection (butler)
+- [x] Self-hosted runner + auto-deploy on push
 - [ ] Web search + web fetch (Anthropic server-side tools)
 - [ ] Slash commands
 
@@ -132,7 +145,11 @@ handler-one-discord-bot/
 │   ├── history.py            # Fetches channel history, formats for Anthropic
 │   └── chunker.py            # 2000-char chunking with code-fence repair
 ├── scripts/run.py            # Entry point
-├── docs/architecture.md      # Design notes
+├── docs/
+│   ├── architecture.md       # Design notes
+│   └── RUNNER_SETUP.md       # Self-hosted runner installation guide
+├── .github/workflows/
+│   └── deploy.yml            # Auto-deploy to zakia-server on push to main
 ├── Dockerfile                # Multi-stage build, non-root runtime
 ├── docker-compose.yml        # Local dev orchestration
 ├── GNUmakefile               # make venv / run / docker-up / docker-logs

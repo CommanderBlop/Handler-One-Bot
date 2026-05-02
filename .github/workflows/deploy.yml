@@ -1,0 +1,76 @@
+name: Deploy to zakia-server
+
+# Triggers on every push to main, or manually from the Actions tab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Never overlap two deploys; queue them.
+concurrency:
+  group: deploy-handler
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, handler-deploy]
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Sync working tree to ~/Documents/Handler-One-Bot/
+        # rsync, not git pull: keeps the canonical install dir on disk
+        # decoupled from where the runner cloned. Excludes the on-server
+        # state we never want overwritten by a deploy:
+        #   .env   — secrets, only ever edited on the host
+        #   .venv  — local virtualenv, repo-side has no idea about it
+        #   *.log  — runtime logs
+        run: |
+          rsync -a --delete ./ ~/Documents/Handler-One-Bot/ \
+            --exclude .git \
+            --exclude .env \
+            --exclude .venv \
+            --exclude '*.log'
+
+      - name: Install / update dependencies
+        # `pip install -e .` is idempotent — only reinstalls if pyproject changes.
+        run: |
+          cd ~/Documents/Handler-One-Bot
+          .venv/bin/pip install --quiet -e .
+
+      - name: Restart bot
+        # Subshell + nohup detaches from the runner step's process group so
+        # the bot survives this step exiting. The runner kills its own
+        # children when the step ends; double-fork via subshell + & avoids
+        # that.
+        run: |
+          pkill -f 'scripts.run' || true
+          pkill -f 'src.mcp_server' || true
+          sleep 1
+          cd ~/Documents/Handler-One-Bot
+          rm -f handler.log
+          ( nohup .venv/bin/python -m scripts.run </dev/null >handler.log 2>&1 & disown ) &
+
+      - name: Smoke check
+        # Tail the log until we see "Logged in as" (Discord handshake) or
+        # a stack trace. 30s is plenty for cold-starting the bot + the
+        # butler MCP subprocess.
+        run: |
+          for i in {1..30}; do
+            if grep -q 'Logged in as' ~/Documents/Handler-One-Bot/handler.log 2>/dev/null; then
+              echo "✓ bot logged in"
+              tail -5 ~/Documents/Handler-One-Bot/handler.log
+              exit 0
+            fi
+            if grep -q 'Traceback\|Error while finding' ~/Documents/Handler-One-Bot/handler.log 2>/dev/null; then
+              echo "✗ bot crashed during startup"
+              tail -50 ~/Documents/Handler-One-Bot/handler.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "✗ bot didn't log in within 30s"
+          tail -50 ~/Documents/Handler-One-Bot/handler.log || true
+          exit 1
