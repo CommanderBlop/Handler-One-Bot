@@ -1,12 +1,12 @@
 """MCP client foundation.
 
 Currently inert — no servers configured. The agent calls `tools()` and gets back
-an empty list, so Claude responds from its own knowledge. When the restaurant
-reservation MCP server is ready (or any other), add a connection here and the
-agent will pick up the new tools automatically.
+an empty list, so Claude responds from its own knowledge. When an MCP tool
+server is ready, add a connection in ``scripts/run.py`` and the agent will
+pick up the new tools automatically.
 
 Designed to support multiple MCP servers concurrently. Each server's tools are
-namespaced by server name to avoid collisions (e.g. ``restaurant__make_booking``).
+namespaced by server name to avoid collisions (e.g. ``search__web_search``).
 """
 
 from __future__ import annotations

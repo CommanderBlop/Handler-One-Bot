@@ -2,14 +2,14 @@
 
 Personal AI assistant for Jack's Discord server. Powered by Claude (Anthropic
 API) and fronted as a Discord bot. Designed to be portable, containerized, and
-extensible — a future restaurant-reservation MCP server will plug in here.
+extensible — MCP tool servers can plug in via `handler_bot/mcp_client.py`.
 
 ## Architecture
 
 ```
 Discord  <->  handler_discord  <->  handler_bot  <->  Anthropic API (Claude)
                                           |
-                                          +---->  MCP servers (future: restaurant)
+                                          +---->  MCP servers (none wired today)
 ```
 
 - **`handler_bot/`** — Stateless Claude agent layer. `agent.py` runs the async
@@ -84,33 +84,6 @@ relevant knobs:
 | `ALLOWED_USER_IDS`   | (any)                | Comma-separated; empty = anyone                  |
 | `ALLOWED_GUILD_IDS`  | (any)                | Comma-separated; empty = any server              |
 
-## Restaurant reservations (Butler integration)
-
-Handler can drive [restaurant-butler](https://github.com/jackieinclair/restaurant-butler)
-— a separate daemon that polls OpenTable and auto-books reservations when a
-slot opens. When wired in, Claude gets `butler__*` tools for searching
-OpenTable, managing the local restaurant catalog, creating reservation hunts
-("quests"), and listing past/current bookings.
-
-To enable: set the `BUTLER_*` vars in `.env`. The most important is
-`BUTLER_MCP_COMMAND`, which should point at the butler repo's venv python so
-the MCP subprocess has butler's dependencies. Example:
-
-```
-BUTLER_MCP_COMMAND=/Users/zakiaserver/Documents/restaurant-butler/.venv/bin/python
-BUTLER_MCP_ARGS=-m src.mcp_server
-BUTLER_API_BASE_URL=http://zakia-server.local:8765
-```
-
-Leave `BUTLER_MCP_COMMAND` blank to disable; the bot falls back to plain
-chat-only mode.
-
-**Docker caveat:** the butler subprocess is launched on the host filesystem
-path you give it. The container can't see that path, so running handler-bot
-inside docker with butler enabled won't work. Either run handler-bot natively
-on the same host as butler (current setup), or expose butler's MCP server over
-a network transport later (TODO).
-
 ## Continuous deployment
 
 Production runs on a Mac mini at home (`zakia-server`). A self-hosted GitHub
@@ -126,7 +99,6 @@ Replicating the runner on a new host: see
 ## Roadmap
 
 - [x] Bot layer + Discord layer + Claude integration
-- [x] Restaurant reservation MCP server connection (butler)
 - [x] Self-hosted runner + auto-deploy on push
 - [ ] Web search + web fetch (Anthropic server-side tools)
 - [ ] Slash commands

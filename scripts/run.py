@@ -11,24 +11,9 @@ from dotenv import load_dotenv
 
 from handler_bot.agent import HandlerAgent
 from handler_bot.config import Settings
-from handler_bot.mcp_client import McpClient, McpServerSpec
+from handler_bot.mcp_client import McpClient
 from handler_bot.prompt import SYSTEM_PROMPT
 from handler_discord.bot import HandlerDiscordBot
-
-
-def _derive_butler_pythonpath(command: str) -> str:
-    """Best-effort: …/<repo>/.venv/bin/python → …/<repo>.
-
-    Use the *lexical* path (no symlink resolution): on macOS especially,
-    ``.venv/bin/python`` is typically a symlink to the system interpreter,
-    so ``.resolve()`` would walk us off the venv into the brew/system tree
-    and break the heuristic. Override with BUTLER_MCP_PYTHONPATH if needed.
-    """
-    from pathlib import Path
-    p = Path(command).absolute()  # absolute, NOT resolve — preserve symlinks
-    if p.parent.name == "bin" and p.parent.parent.name == ".venv":
-        return str(p.parent.parent.parent)
-    return str(p.parent)
 
 
 def _setup_logging(level: str) -> None:
@@ -50,29 +35,9 @@ async def _amain() -> None:
     _setup_logging(settings.log_level)
     log = logging.getLogger("handler.run")
 
+    # No MCP servers configured by default. Add a `mcp.connect(McpServerSpec(...))`
+    # call here when wiring a future tool backend.
     mcp = McpClient()
-    if settings.butler_mcp_command:
-        import os
-        butler_env = {
-            "BUTLER_API_BASE_URL": settings.butler_api_base_url,
-            "PATH": os.environ.get("PATH", ""),
-            # The butler MCP server is `python -m src.mcp_server` — the
-            # subprocess needs PYTHONPATH pointing at the butler repo so
-            # the import resolves. Pass through if the user set it; else
-            # derive from the command path (assumes …/<repo>/.venv/bin/python).
-            "PYTHONPATH": os.environ.get(
-                "BUTLER_MCP_PYTHONPATH",
-                _derive_butler_pythonpath(settings.butler_mcp_command),
-            ),
-        }
-        if settings.butler_api_token:
-            butler_env["BUTLER_API_TOKEN"] = settings.butler_api_token
-        await mcp.connect(McpServerSpec(
-            name="butler",
-            command=settings.butler_mcp_command,
-            args=[a for a in settings.butler_mcp_args.split() if a],
-            env=butler_env,
-        ))
 
     agent = HandlerAgent(
         api_key=settings.anthropic_api_key,

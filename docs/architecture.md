@@ -27,9 +27,8 @@
               |  Claude Haiku 4.5   |
               +---------------------+
 
-  (Future) handler_bot.mcp_client connects to:
-    - restaurant-reservation MCP server (separate project)
-    - any other MCP server we want
+  (Future) handler_bot.mcp_client connects to MCP tool servers
+    (web search, scheduled reminders, etc.) — none wired today.
 ```
 
 ## Why this split
@@ -96,21 +95,22 @@ When the MCP client has tools, every `messages.create()` may return
 Tool names are namespaced as `<server>__<tool>` so multiple MCP servers can
 expose tools with the same local name without collisions.
 
-## Adding the restaurant MCP server
+## Adding an MCP tool server
 
-Two lines in `scripts/run.py`:
+Two lines in `scripts/run.py`, where the existing `mcp = McpClient()` lives:
 
 ```python
 from handler_bot.mcp_client import McpServerSpec
 await mcp.connect(McpServerSpec(
-    name="restaurant",
+    name="my-tools",
     command="python",
-    args=["-m", "restaurant_mcp.server"],
+    args=["-m", "my_tool_pkg.server"],
 ))
 ```
 
-Or, if it ships as a separate container, swap the stdio transport for SSE in
-`mcp_client.py` (the MCP Python SDK supports both).
+Tools are auto-namespaced as `<server>__<tool>` so multiple servers can
+coexist without collisions. For an SSE-style MCP server, swap the stdio
+transport in `mcp_client.py` (the MCP Python SDK supports both).
 
 ## Model choice
 

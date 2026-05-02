@@ -222,12 +222,15 @@ Two ways to fix:
       WHERE service LIKE "%FullDisk%" OR service LIKE "%Documents%";'
    ```
 
-### Bot crashes on butler MCP startup after deploy
+### Bot can't read or write a TCC-protected path after deploy
 
-If `BUTLER_MCP_COMMAND` in `.env` points at a path under `~/Documents/`
-and you haven't granted FDA to the runner, the bot will start but fail
-to spawn butler MCP. Either move butler out of `~/Documents/` too, or
-grant FDA per the previous section.
+The same TCC trap applies if you ever wire an MCP server (or any subprocess
+the bot spawns) whose working files live under `~/Documents/`, `~/Desktop/`,
+or `~/Downloads/`. The bot, launched from launchd via the runner-spawned
+plist kickstart, inherits the runner's restricted TCC profile and will hang
+or fail when the subprocess tries to read those files. Either move the
+subprocess's files out of TCC-protected dirs, or grant FDA to the runner
+per the previous section.
 
 ## Removing the runner
 

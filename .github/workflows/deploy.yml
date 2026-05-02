@@ -58,8 +58,7 @@ jobs:
 
       - name: Smoke check
         # Tail the log until we see "Logged in as" (Discord handshake) or
-        # a stack trace. 30s is plenty for cold-starting the bot + the
-        # butler MCP subprocess.
+        # a stack trace. 30s is plenty for the cold-start + Discord login.
         run: |
           for i in {1..30}; do
             if grep -q 'Logged in as' ~/handler-one-bot/handler.log 2>/dev/null; then

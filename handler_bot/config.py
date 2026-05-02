@@ -30,14 +30,6 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    # ── Butler MCP server (restaurant reservation backend) ──────────
-    # If set, the bot launches the butler MCP server as a subprocess
-    # and exposes its tools to Claude. Empty = no butler integration.
-    butler_mcp_command: str = ""
-    butler_mcp_args: str = ""           # space-separated
-    butler_api_base_url: str = "http://zakia-server.local:8765"
-    butler_api_token: str = ""
-
     @property
     def allowed_user_id_set(self) -> set[int]:
         return _parse_id_set(self.allowed_user_ids)
